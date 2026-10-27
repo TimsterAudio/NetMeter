@@ -1,0 +1,166 @@
+# Publishes a GitHub release whenever main carries a version (from
+# Cargo.toml) that hasn't been released yet. Bump the version, update
+# CHANGELOG.md, merge to main: the release `vX.Y.Z` appears with the Linux
+# and Windows downloads and that version's changelog as its notes.
+#
+# A release only happens when the version changes, so on main it runs only
+# on pushes that touch these files. Pull requests that change the packaging
+# (this workflow or packaging/) build and package everything but publish
+# nothing, so the packaging can be checked first. A manual run on any branch
+# does the same dry run (Actions > Release > Run workflow): use it to get
+# test packages of a branch.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - CHANGELOG.md
+      - .github/workflows/release.yml
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packaging/**
+  workflow_dispatch:
+
+# Never cancel a release on main; a newer dry run replaces an older one.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      # "true" only once the release exists *with* its downloads attached.
+      exists: ${{ steps.v.outputs.exists }}
+      # create: no release yet. attach: a release was made by hand on
+      # GitHub without files, so keep it and add the packages to it.
+      mode: ${{ steps.v.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if assets=$(gh release view "v$ver" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null); then
+            if [ "$assets" -gt 0 ]; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "v$ver is already released with $assets file(s); nothing to publish."
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+              echo "mode=attach" >> "$GITHUB_OUTPUT"
+              echo "v$ver exists without files; the packages will be attached to it."
+            fi
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "mode=create" >> "$GITHUB_OUTPUT"
+          fi
+
+  linux:
+    name: Package Linux
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Reuse the cache CI keeps warm on main; CI is the only writer.
+          shared-key: linux
+          save-if: false
+      - run: cargo build --release
+      - name: Package
+        run: |
+          name="taw-netmeter-${{ needs.version.outputs.version }}-linux-x86_64"
+          mkdir "$name"
+          cp target/release/taw-netmeter packaging/linux/*.desktop README.md CHANGELOG.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-linux
+          retention-days: 7
+          path: taw-netmeter-*.tar.gz
+
+  windows:
+    name: Package Windows
+    needs: version
+    if: needs.version.outputs.exists == 'false' || github.ref != 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Reuse the cache CI keeps warm on main; CI is the only writer.
+          shared-key: windows
+          save-if: false
+      - run: cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "taw-netmeter-${{ needs.version.outputs.version }}-windows-x86_64"
+          New-Item -ItemType Directory $name | Out-Null
+          Copy-Item target/release/taw-netmeter.exe, README.md, CHANGELOG.md $name
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-windows
+          retention-days: 7
+          path: taw-netmeter-*.zip
+
+  publish:
+    name: Publish release
+    needs: [version, linux, windows]
+    if: github.ref == 'refs/heads/main' && needs.version.outputs.exists == 'false'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: dist
+      - name: Release notes from CHANGELOG.md
+        run: |
+          ver="${{ needs.version.outputs.version }}"
+          awk -v v="$ver" 'index($0, "## " v " ") == 1 {f=1; next} f && /^## / {exit} f' CHANGELOG.md > notes.md
+          cat >> notes.md <<'EOF'
+
+          ## Downloads
+
+          - **Linux** (`…-linux-x86_64.tar.gz`): extract it and run `./taw-netmeter`.
+          - **Windows** (`…-windows-x86_64.zip`): extract it and run `taw-netmeter.exe`.
+
+          The Net Meter only reads this computer's own counters and never sends anything. Internet and LAN apart on Linux; Windows shows all traffic for now.
+          EOF
+          cat notes.md
+      - name: Create the release, or attach to the existing one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="${{ needs.version.outputs.version }}"
+          if [ "${{ needs.version.outputs.mode }}" = "attach" ]; then
+            # Keep the hand-made release's title and notes; just add the files.
+            gh release upload "v$ver" dist/* --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "v$ver" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "TAW Net Meter $ver" \
+              --notes-file notes.md
+          fi

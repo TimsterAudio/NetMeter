@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request cancels the older run
+# still in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux
+    # Every branch push. Skipped on pull_request events, because the push
+    # has already checked the same commit.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main writes the cache, so branch caches can't evict it
+          # from the 10 GB repo limit. Branches still read it.
+          shared-key: linux
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taw-netmeter-linux-x86_64
+          retention-days: 7
+          path: |
+            target/release/taw-netmeter
+            packaging/linux/taw-netmeter.desktop
+
+  windows:
+    name: Windows
+    # Windows runs on main, pull requests and manual runs, not on every
+    # feature-branch push (sessions check the Windows build locally with
+    # the x86_64-pc-windows-gnu clippy before pushing).
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main writes the cache, so branch caches can't evict it
+          # from the 10 GB repo limit. Branches still read it.
+          shared-key: windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taw-netmeter-windows-x86_64
+          retention-days: 7
+          path: target/release/taw-netmeter.exe

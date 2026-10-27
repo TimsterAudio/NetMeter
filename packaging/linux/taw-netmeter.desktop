@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=TAW Net Meter
+GenericName=Network Monitor
+Comment=Download and upload rates for the Internet and the local network
+Exec=taw-netmeter
+Icon=network-transmit-receive
+Terminal=false
+Categories=Network;System;Monitor;
+StartupWMClass=taw-netmeter
