@@ -4,7 +4,7 @@ A small window that sits on the desktop and shows how fast the network is going:
 
 It only reads the computer's own counters. It never sends anything.
 
-**Version 0.1.0.** Downloads for Linux and Windows are on the [releases page](https://github.com/TimsterAudio/NetMeter/releases): extract the archive and run `taw-netmeter` (Linux; `packaging/linux/taw-netmeter.desktop` adds it to the menu) or `taw-netmeter.exe` (Windows).
+**Version 0.2.0.** Downloads for Linux and Windows are on the [releases page](https://github.com/TimsterAudio/NetMeter/releases): extract the archive and run `taw-netmeter` (Linux; `packaging/linux/taw-netmeter.desktop` adds it to the menu) or `taw-netmeter.exe` (Windows).
 
 ![The Net Meter on frosted glass, with the mouse over it](docs/screenshot.png)
 

@@ -1,6 +1,6 @@
 [package]
 name = "taw-netmeter"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Timster's Audio Works Net Meter (NM-001): a small desktop monitor of network download and upload rates, Internet and LAN, for Linux and Windows"
 authors = ["Timster's Audio Works"]

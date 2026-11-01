@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 – 2026-11-01
+
 - The Glass look, from the panel's review: frosted or smoked glass with the desktop showing through, no faceplate, Outfit type with light figures, and the controls (settings, stay on top, minimise, close) in a pill that appears only under the mouse.
 - Download is green (Glass OK) and upload orange (Glass Pen 2) by default; both can be changed in Settings, from Glass's palette plus red, violet and ink.
 - Settings open in a window of their own, with how see-through the glass is.
