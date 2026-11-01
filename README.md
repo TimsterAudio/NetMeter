@@ -1,20 +1,26 @@
 # TAW Net Meter (NM-001)
 
-A small window that sits on the desktop and shows how fast the network is going: download and upload as scrolling graphs, like BitMeter, with the Internet and the local network (LAN) apart. It wears the same hi-fi look as the Analyser and the rest of the Timster's Audio Works family (TAW-Panel's `hifi`, pinned at the Analyser's commit).
+A small window that sits on the desktop and shows how fast the network is going: download and upload as scrolling graphs, like BitMeter, with the Internet and the local network (LAN) apart. It wears **Glass**, the Timster's Audio Works look for utilities and gadgets (from TAW-Panel's looks review): frosted or smoked glass with the desktop showing through, Outfit type, and the controls only under the mouse.
 
 It only reads the computer's own counters. It never sends anything.
 
 **Version 0.1.0.** Downloads for Linux and Windows are on the [releases page](https://github.com/TimsterAudio/NetMeter/releases): extract the archive and run `taw-netmeter` (Linux; `packaging/linux/taw-netmeter.desktop` adds it to the menu) or `taw-netmeter.exe` (Windows).
 
-![The Net Meter in Spool Light](docs/screenshot.png)
+![The Net Meter on frosted glass, with the mouse over it](docs/screenshot.png)
+
+![On smoked glass](docs/screenshot-smoked.png)
 
 ## Using it
 
-- **The graphs**: download is the filled line in the display's ink, upload the second line (its colour is the small ▲ by its figure). The figures along the top are the latest reading; hover over the graph to read any moment.
-- **H**, or a double-click on the display, hides the title strip and leaves only the display. Drag the display to move the window; resize from any edge.
+- **The graphs**: download is the green trace with a fill fading under it, upload the orange line (Glass's OK and Pen 2 colours; both can be changed in Settings). The figures along the top are the latest reading; hover over the graph to read any moment.
+- **The controls** (settings, stay on top, minimise, close) appear in a pill at the bottom right while the mouse is over the window. **H**, or a double-click, turns them off for a bare gadget. Drag anywhere to move the window; resize from any edge.
 - **T** keeps it on top of other windows, or not (on by default).
-- **Right-click** the display for the everyday choices: what to show, bits or bytes, mirrored, stay on top, the strip, Settings.
-- **Settings** (the gear): look; Internet, LAN, both or all traffic; overlaid (both up from the bottom) or mirrored (download up from the middle, upload down); 1 to 10 minutes of history; a scale that follows the traffic or a fixed top (1 Mb/s to 10 Gb/s), linear or logarithmic; bits or bytes, the unit automatic or fixed, powers of 1000 or 1024; how often it reads (½, 1 or 2 s); which adaptor.
+- **Right-click** for the everyday choices: what to show, bits or bytes, frosted or smoked, mirrored, stay on top, Settings.
+- **Settings** open in a window of their own: the glass (automatic, frosted or smoked; how see-through) and the download and upload colours; Internet, LAN, both or all traffic; overlaid (both up from the bottom) or mirrored (download up from the middle, upload down); 1 to 10 minutes of history; a scale that follows the traffic or a fixed top (1 Mb/s to 10 Gb/s), linear or logarithmic; bits or bytes, the unit automatic or fixed, powers of 1000 or 1024; how often it reads (½, 1 or 2 s); which adaptor.
+
+The glass shows the desktop through where the system composites windows (Windows, and Linux desktops with a compositor, which is nearly all of them); elsewhere it's solid.
+
+![The settings window, frosted and smoked](docs/screenshot-settings.png)
 
 ## Internet and LAN
 
@@ -49,12 +55,14 @@ cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # Win
 | File | What it does |
 |---|---|
 | `src/main.rs` | The window. |
-| `src/app.rs` | The strip, the display (graphs, scale, readings, hover), the quick menu and the settings drawer. |
+| `src/app.rs` | The display (graphs, scale, readings, hover), the controls under the mouse, the quick menu and the settings window. |
+| `src/glass.rs` | The Glass look: colours, Outfit type, the traces, the control pill and its icons. |
 | `src/rates.rs` | Rates, units and formatting, scales, and the history. Unit tested. |
 | `src/lan.rs` | LAN or Internet, by address. Unit tested. |
 | `src/sampler.rs` | Reads the counters on its own thread at the chosen interval. |
 | `src/net/` | Each system's counters: Linux (`/proc/net/dev`, sock_diag), Windows (`GetIfTable2`). |
 | `src/icon.rs` | The window icon. |
+| `assets/fonts/` | Outfit (Light, Regular, Medium), under the SIL Open Font License (`OFL.txt`). |
 
 ## Next
 

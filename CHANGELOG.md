@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The Glass look, from the panel's review: frosted or smoked glass with the desktop showing through, no faceplate, Outfit type with light figures, and the controls (settings, stay on top, minimise, close) in a pill that appears only under the mouse.
+- Download is green (Glass OK) and upload orange (Glass Pen 2) by default; both can be changed in Settings, from Glass's palette plus red, violet and ink.
+- Settings open in a window of their own, with how see-through the glass is.
+- Settings from 0.1.0 keep their choices; the hi-fi finish they name is no longer used.
+
 ## 0.1.0 – 2026-10-27
 
 - First version: the TAW Net Meter (NM-001), a small desktop window of scrolling download and upload graphs, in the family's hi-fi look (Spool or Porcelain, light or dark).

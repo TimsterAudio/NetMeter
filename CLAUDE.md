@@ -1,6 +1,6 @@
 # TAW Net Meter: working conventions
 
-The Net Meter (NM-001) is Timster's Audio Works' desktop network monitor: download and upload rates, Internet and LAN, as scrolling graphs in a small window. Rust with egui (via eframe). Its look (the `hifi` module: finishes, badge, window buttons and controls) comes from the shared `taw-panel` crate (TimsterAudio/TAW-Panel), pinned by commit in Cargo.toml. Change the shared look there, then move the pin. The window has no system title bar unless the user turns it on in Settings.
+The Net Meter (NM-001) is Timster's Audio Works' desktop network monitor: download and upload rates, Internet and LAN, as scrolling graphs in a small window. Rust with egui (via eframe). Its look is **Glass**, from TAW-Panel's looks review (`docs/looks-review.html`, decided 2026-10-27): `src/glass.rs` holds it until a second utility needs it, then it moves into the shared `taw-panel` crate (TimsterAudio/TAW-Panel) beside `hifi`. The app still uses `taw-panel` (pinned by commit in Cargo.toml) for window resizing and the 0.1.0 settings type. The window is see-through, has no system title bar unless the user turns it on in Settings, and shows its controls only under the mouse; settings open in their own window.
 
 ## Hard rules
 
@@ -23,7 +23,7 @@ cargo test
 cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # Windows still compiles
 ```
 
-For panel changes, screenshot it under Xvfb at the default 420 × 180 and at the minimum 200 × 90, in Spool and Porcelain, light and dark (needs `libxkbcommon-x11-0`).
+For panel changes, screenshot it under Xvfb at the default 420 × 180 and at the minimum 200 × 90, frosted and smoked, with the mouse over it and not (needs `libxkbcommon-x11-0`; run `xcompmgr` and put a picture behind the window to see the glass).
 
 ## Workflow
 

@@ -7,6 +7,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod glass;
 mod icon;
 // Windows has no LAN figure yet (see net/windows.rs).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -22,9 +23,11 @@ fn main() -> eframe::Result {
             .with_app_id("taw-netmeter")
             .with_inner_size(app::DEFAULT_SIZE)
             .with_min_inner_size(app::MIN_SIZE)
-            // The meter draws its own strip and window buttons; Settings
+            // The meter draws its own controls; Settings
             // can bring back the system's title bar.
             .with_decorations(false)
+            // Glass: the desktop shows through.
+            .with_transparent(true)
             .with_icon(icon::icon()),
         ..Default::default()
     };

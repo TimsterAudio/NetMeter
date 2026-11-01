@@ -1,30 +1,27 @@
 //! The Net Meter (NM-001): a small window of scrolling graphs, download and
 //! upload, for the Internet and the local network, to keep on the desktop.
 //!
-//! The panel is the TAW hi-fi look (TAW-Panel's `hifi`), cut down to a
-//! slim strip along the top (badge, settings, window buttons) over the
-//! display window. H, or a double-click on the display, hides the strip so
-//! only the display is left; drag the display to move the window.
-//! Right-click the display for the everyday choices.
+//! The look is Glass (see `glass.rs`): a see-through rounded pane with no
+//! faceplate. The controls (settings, stay on top, minimise, close) sit in
+//! a pill at the bottom right that shows only while the mouse is over the
+//! window. Drag anywhere to move it; right-click for the everyday choices.
+//! Settings open in a window of their own.
 
+use crate::glass::{self, Build, Icon, Tokens};
 use crate::net;
 use crate::rates::{self, Format, History, Lane, Prefix, Rate, Sample, Show, Units};
 use crate::sampler::Sampler;
 use egui::{
-    Align2, Color32, Id, Key, Painter, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
-    ViewportCommand, WindowLevel,
+    Align2, Id, Key, Pos2, Rect, Sense, Stroke, Ui, Vec2, ViewportBuilder, ViewportClass,
+    ViewportCommand, ViewportId, WindowLevel,
 };
 use serde::{Deserialize, Serialize};
-use taw_panel::hifi::{self, Seg, Tokens};
+use taw_panel::hifi;
 
 const STORAGE_KEY: &str = "taw-netmeter";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SIZE: Vec2 = Vec2::new(420.0, 180.0);
 pub const MIN_SIZE: Vec2 = Vec2::new(200.0, 90.0);
-/// The strip along the top: drag it to move the window.
-const STRIP_H: f32 = 34.0;
-/// The line over each graph with its name and the rates.
-const HEAD_H: f32 = 18.0;
 const HISTORIES: [u32; 4] = [60, 120, 300, 600];
 const INTERVALS: [u32; 3] = [500, 1000, 2000];
 
@@ -32,7 +29,7 @@ const INTERVALS: [u32; 3] = [500, 1000, 2000];
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Saved {
-    /// Finish, light or dark, and accent.
+    /// The hi-fi look 0.1.0 wore. Kept so its settings still load.
     finish: hifi::Look,
     show: Show,
     /// Download up from the middle, upload down from it, rather than both
@@ -51,11 +48,14 @@ struct Saved {
     log_scale: bool,
     /// One adaptor's id, or every real adaptor.
     adaptor: Option<String>,
-    /// The strip along the top; off leaves only the display.
+    /// The window's controls (a title strip in 0.1.0, the pill under the
+    /// mouse since): off leaves only the graphs.
     controls: bool,
     on_top: bool,
-    /// Use the system's title bar instead of the meter's own strip.
+    /// Use the system's title bar instead of the meter's own controls.
     system_title_bar: bool,
+    /// Frosted or smoked, how see-through, and the traces' colours.
+    glass: glass::Look,
 }
 
 impl Default for Saved {
@@ -75,6 +75,7 @@ impl Default for Saved {
             controls: true,
             on_top: true,
             system_title_bar: false,
+            glass: glass::Look::default(),
         }
     }
 }
@@ -105,7 +106,7 @@ pub struct NetMeterApp {
 
 impl NetMeterApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        hifi::install_fonts(&cc.egui_ctx);
+        glass::install_fonts(&cc.egui_ctx);
         let s: Saved = cc
             .storage
             .and_then(|st| eframe::get_value(st, STORAGE_KEY))
@@ -149,11 +150,14 @@ impl NetMeterApp {
 
     fn set_on_top(&mut self, ctx: &egui::Context, on: bool) {
         self.s.on_top = on;
-        ctx.send_viewport_cmd(ViewportCommand::WindowLevel(if on {
-            WindowLevel::AlwaysOnTop
-        } else {
-            WindowLevel::Normal
-        }));
+        ctx.send_viewport_cmd_to(
+            ViewportId::ROOT,
+            ViewportCommand::WindowLevel(if on {
+                WindowLevel::AlwaysOnTop
+            } else {
+                WindowLevel::Normal
+            }),
+        );
     }
 
     fn take_samples(&mut self) {
@@ -168,38 +172,45 @@ impl NetMeterApp {
         }
     }
 
+    fn open_settings(&mut self) {
+        self.settings_open = !self.settings_open;
+        if self.settings_open {
+            self.refresh_adaptors();
+        }
+    }
+
     // ------------------------------------------------------------ display
 
     fn display(&self, ui: &Ui, rect: Rect, t: &Tokens) {
-        hifi::display(ui.painter(), rect, t);
         let p = ui.painter().with_clip_rect(rect);
-        let inner = rect.shrink2(Vec2::new(10.0, 6.0));
+        let pad = Vec2::new(
+            (rect.width() * 0.035).clamp(8.0, 16.0),
+            (rect.height() * 0.06).clamp(6.0, 14.0),
+        );
+        let inner = rect.shrink2(pad);
         if let Some(e) = &self.error {
-            hifi::ink_text(
-                &p,
+            p.text(
                 inner.center(),
                 Align2::CENTER_CENTER,
-                &format!("Can't read the network: {e}"),
-                hifi::ui_font(12.5),
-                t,
+                format!("Can't read the network: {e}"),
+                glass::regular(13.0),
+                t.ink2,
             );
             return;
         }
         if self.history.latest().is_none() {
-            hifi::ink_text(
-                &p,
+            p.text(
                 inner.center(),
                 Align2::CENTER_CENTER,
                 "Measuring…",
-                hifi::ui_font(12.5),
-                t,
+                glass::regular(13.0),
+                t.ink2,
             );
             return;
         }
         let lanes = self.s.show.lanes(self.sampler.lan_known);
-        let gap = 8.0;
+        let gap = (inner.height() * 0.06).clamp(6.0, 12.0);
         let h = (inner.height() - gap * (lanes.len() as f32 - 1.0)) / lanes.len() as f32;
-        // Where the pointer is over the graph, as a time.
         let hover_x = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|q| inner.contains(*q))
@@ -213,17 +224,13 @@ impl NetMeterApp {
         }
     }
 
-    /// The colours of download and upload.
-    fn colours(t: &Tokens) -> (Color32, Color32) {
-        let up = if t.ink == t.accent { t.text } else { t.accent };
-        (t.ink, up)
-    }
-
-    fn lane(&self, p: &Painter, r: Rect, lane: Lane, t: &Tokens, hover_x: Option<f32>) {
+    fn lane(&self, p: &egui::Painter, r: Rect, lane: Lane, t: &Tokens, hover_x: Option<f32>) {
         let fmt = self.s.format();
         let span = self.s.span();
-        let (down_c, up_c) = Self::colours(t);
-        let g = Rect::from_min_max(Pos2::new(r.left(), r.top() + HEAD_H), r.max);
+        // The figures grow with the window: 22 pt at the review's size.
+        let fig = (r.height() * 0.2).clamp(12.0, 24.0);
+        let head_h = fig + 6.0;
+        let g = Rect::from_min_max(Pos2::new(r.left(), r.top() + head_h), r.max);
         let Some(newest) = self.history.latest().map(|s| s.at) else {
             return;
         };
@@ -235,27 +242,28 @@ impl NetMeterApp {
             fmt.nice_ceiling(self.history.peak(lane, span))
         };
         let log = self.s.log_scale;
-
-        // The grid: the top of the scale and the middle, faintly.
-        let faint = Stroke::new(1.0, t.ink_faint(0.12));
         let mid_y = g.center().y;
-        p.line_segment([g.left_top(), g.right_top()], faint);
+
+        // The baseline (the middle, when mirrored), and the scale's top.
+        let base = if self.s.mirrored {
+            mid_y
+        } else {
+            g.bottom() - 0.5
+        };
         p.line_segment(
-            [Pos2::new(g.left(), mid_y), Pos2::new(g.right(), mid_y)],
-            Stroke::new(1.0, t.ink_faint(if self.s.mirrored { 0.22 } else { 0.07 })),
+            [Pos2::new(g.left(), base), Pos2::new(g.right(), base)],
+            Stroke::new(1.0, t.grid),
         );
-        if g.height() > 28.0 {
-            hifi::label(
-                p,
-                Pos2::new(g.left() + 2.0, g.top() + 2.0),
+        if g.height() > 26.0 {
+            p.text(
+                Pos2::new(g.left(), g.top() + 1.0),
                 Align2::LEFT_TOP,
-                &fmt.mark(top),
-                hifi::num(9.5),
-                t.ink_faint(0.55),
+                fmt.mark(top),
+                glass::regular((fig * 0.5).clamp(9.5, 12.0)),
+                t.ink2,
             );
         }
 
-        // The traffic.
         let mut down = Vec::new();
         let mut up = Vec::new();
         for s in self.history.recent(span) {
@@ -273,134 +281,126 @@ impl NetMeterApp {
                 up.push(Pos2::new(x, g.bottom() - lu * g.height()));
             }
         }
-        if self.s.mirrored {
-            hifi::ink_curve(p, &down, mid_y, down_c, 0.40, 1.5);
-            hifi::ink_curve(p, &up, mid_y, up_c, 0.30, 1.5);
+        let plot = if self.s.mirrored {
+            Rect::from_min_max(g.min, Pos2::new(g.right(), mid_y))
         } else {
-            hifi::ink_curve(p, &down, g.bottom(), down_c, 0.38, 1.5);
-            hifi::ink_curve(p, &up, g.bottom(), up_c, 0.12, 1.5);
-        }
+            g
+        };
+        glass::trace(p, &down, plot, base, t.down, 0.5, 1.6);
+        glass::trace(p, &up, plot, base, t.up, 0.0, 1.2);
 
         // The pointer's moment, or now.
-        let mut shown: Option<(&Sample, String)> = None;
+        let mut when = None;
+        let mut sample: &Sample = self.history.latest().unwrap();
         if let Some(x) = hover_x {
             let at = newest - ((g.right() - x) / g.width()) as f64 * span;
             if let Some(s) = self.history.nearest(at) {
                 let sx = x_of(s.at);
                 p.line_segment(
                     [Pos2::new(sx, g.top()), Pos2::new(sx, g.bottom())],
-                    Stroke::new(1.0, t.ink_faint(0.45)),
+                    Stroke::new(1.0, t.ink2.gamma_multiply(0.6)),
                 );
                 let ago = (newest - s.at).round();
-                let when = if ago < 1.0 {
+                when = Some(if ago < 1.0 {
                     "now".to_string()
                 } else if ago < 120.0 {
                     format!("{ago:.0} s ago")
                 } else {
                     format!("{:.0} min ago", ago / 60.0)
-                };
-                shown = Some((s, when));
+                });
+                sample = s;
             }
         }
-        let (sample, when) = match shown {
-            Some((s, w)) => (s, Some(w)),
-            None => (self.history.latest().unwrap(), None),
-        };
         let rate = sample.lane(lane).unwrap_or_default();
-        self.heading(p, r, lane, rate, when.as_deref(), t);
+        self.heading(p, r, head_h, fig, lane, rate, when.as_deref(), t);
     }
 
-    /// The lane's name on the left, and ↓ download ↑ upload on the right.
+    /// The lane's name in spaced capitals, and ▼ download ▲ upload in light
+    /// figures on the right.
+    #[allow(clippy::too_many_arguments)]
     fn heading(
         &self,
-        p: &Painter,
+        p: &egui::Painter,
         r: Rect,
+        head_h: f32,
+        fig: f32,
         lane: Lane,
         rate: Rate,
         when: Option<&str>,
         t: &Tokens,
     ) {
         let fmt = self.s.format();
-        let (down_c, up_c) = Self::colours(t);
-        let y = r.top() + HEAD_H / 2.0 - 1.0;
-        let font = hifi::num(11.0);
+        let y = r.top() + head_h / 2.0 - 2.0;
         let mut x = r.right();
-        let right_part = |x: &mut f32, v: f64, up: bool, c: Color32| {
-            let tr = hifi::ink_text(
-                p,
-                Pos2::new(*x, y),
+        for (v, up, c) in [(rate.up, true, t.up), (rate.down, false, t.down)] {
+            let tr = p.text(
+                Pos2::new(x, y),
                 Align2::RIGHT_CENTER,
-                &fmt.rate(v),
-                font.clone(),
-                t,
+                fmt.rate(v),
+                glass::light(fig),
+                t.ink,
             );
-            arrow(p, Pos2::new(tr.left() - 7.0, y), up, c);
-            *x = tr.left() - 20.0;
-        };
-        right_part(&mut x, rate.up, true, up_c);
-        right_part(&mut x, rate.down, false, down_c);
+            let a = fig * 0.55;
+            glass::arrow(p, Pos2::new(tr.left() - a * 0.5 - 5.0, y + 1.0), up, a, c);
+            x = tr.left() - a - fig * 0.75;
+        }
         let name = match when {
-            Some(w) => format!("{} · {w}", lane.name().to_uppercase()),
-            None => lane.name().to_uppercase(),
+            Some(w) => format!("{} · {w}", lane.name()),
+            None => lane.name().to_string(),
         };
-        let room = x - r.left() - 6.0;
-        if room > 40.0 {
-            hifi::label_fit(
+        let room = x - r.left();
+        if room > 30.0 {
+            glass::caps(
                 p,
                 Pos2::new(r.left(), y),
-                Align2::LEFT_CENTER,
                 &name,
-                hifi::semi(10.5),
-                t.ink_faint(0.8),
+                (fig * 0.48).clamp(9.0, 11.0),
+                t.ink2,
                 room,
             );
         }
     }
 
-    // ------------------------------------------------------------ top
-
-    fn strip(&mut self, ui: &mut Ui, screen: Rect, t: &Tokens) {
-        let strip = Rect::from_min_size(screen.min, Vec2::new(screen.width(), STRIP_H));
-        if !self.s.system_title_bar {
-            hifi::drag_to_move(ui, strip);
-        }
-        let mut right = screen.right() - 6.0;
-        if !self.s.system_title_bar {
-            let b = hifi::window_buttons(ui, Pos2::new(right, screen.top() + 5.0), t);
-            right = b.left() - 4.0;
-        }
-        let gear = Rect::from_min_size(
-            Pos2::new(right - 26.0, screen.top() + 4.0),
-            Vec2::splat(26.0),
+    /// The controls' pill, bottom right, while the mouse is over the window.
+    fn controls(&mut self, ui: &mut Ui, screen: Rect, t: &Tokens) {
+        let ctx = ui.ctx().clone();
+        let n = 4.0;
+        let (bw, h) = (26.0, 28.0);
+        let inset = 10.0f32.min(screen.height() * 0.08);
+        let r = Rect::from_min_size(
+            Pos2::new(
+                screen.right() - inset - bw * n - 12.0,
+                screen.bottom() - inset - h,
+            ),
+            Vec2::new(bw * n + 12.0, h),
         );
-        if hifi::gear_button(ui, gear, Id::new("settings"), t, self.settings_open).clicked() {
-            self.open_settings();
-        }
-        let room = gear.left() - screen.left() - 20.0;
-        let at = Pos2::new(screen.left() + 10.0, screen.top() + 6.0);
-        if room > 210.0 {
-            hifi::badge(
-                ui.painter(),
-                Pos2::new(at.x + badge_width(ui, t) / 2.0, at.y),
-                t,
-                "Net Meter",
+        glass::strip(ui.painter(), r, t);
+        let icons = [
+            (Icon::Settings, "Settings"),
+            (
+                Icon::OnTop(self.s.on_top),
+                if self.s.on_top {
+                    "Staying on top (click to stop)"
+                } else {
+                    "Stay on top"
+                },
+            ),
+            (Icon::Minimise, "Minimise"),
+            (Icon::Close, "Close"),
+        ];
+        for (i, (icon, tip)) in icons.into_iter().enumerate() {
+            let b = Rect::from_min_size(
+                Pos2::new(r.left() + 6.0 + i as f32 * bw, r.top() + 1.0),
+                Vec2::new(bw, h - 2.0),
             );
-        } else if room > 70.0 {
-            hifi::label(
-                ui.painter(),
-                Pos2::new(at.x, screen.top() + STRIP_H / 2.0),
-                Align2::LEFT_CENTER,
-                "Net Meter",
-                hifi::bold(12.0),
-                t.text,
-            );
-        }
-    }
-
-    fn open_settings(&mut self) {
-        self.settings_open = !self.settings_open;
-        if self.settings_open {
-            self.refresh_adaptors();
+            if glass::icon_button(ui, b, Id::new(("glass-btn", i)), t, icon, tip).clicked() {
+                match icon {
+                    Icon::Settings => self.open_settings(),
+                    Icon::OnTop(on) => self.set_on_top(&ctx, !on),
+                    Icon::Minimise => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                    Icon::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
+                }
+            }
         }
     }
 
@@ -426,21 +426,20 @@ impl NetMeterApp {
                 }
             }
         });
+        ui.menu_button("Glass", |ui| {
+            for b in Build::ALL {
+                if ui.radio(self.s.glass.build == b, b.name()).clicked() {
+                    self.s.glass.build = b;
+                    ui.close();
+                }
+            }
+        });
         if ui.checkbox(&mut self.s.mirrored, "Mirrored").clicked() {
             ui.close();
         }
         let mut on_top = self.s.on_top;
         if ui.checkbox(&mut on_top, "Stay on top").clicked() {
             self.set_on_top(&ctx, on_top);
-            ui.close();
-        }
-        let strip = if self.s.controls {
-            "Hide the title strip"
-        } else {
-            "Show the title strip"
-        };
-        if ui.button(strip).clicked() {
-            self.s.controls = !self.s.controls;
             ui.close();
         }
         if ui.button("Settings…").clicked() {
@@ -470,188 +469,221 @@ impl NetMeterApp {
 
     // ------------------------------------------------------------ settings
 
-    fn settings(&mut self, ctx: &egui::Context, t: &Tokens) {
-        let mut open = self.settings_open;
+    /// The settings, in a window of their own.
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let builder = ViewportBuilder::default()
+            .with_title("Net Meter settings")
+            .with_app_id("taw-netmeter")
+            .with_inner_size([380.0, 600.0])
+            .with_min_inner_size([320.0, 300.0])
+            .with_icon(crate::icon::icon());
+        ctx.show_viewport_immediate(
+            ViewportId::from_hash_of("taw-netmeter-settings"),
+            builder,
+            |ctx, class| {
+                if ctx.input(|i| i.viewport().close_requested())
+                    || ctx.input(|i| i.key_pressed(Key::Escape))
+                {
+                    self.settings_open = false;
+                }
+                let t = Tokens::from_ctx(ctx, &self.s.glass);
+                glass::apply_visuals(ctx, &t);
+                if class == ViewportClass::EmbeddedWindow {
+                    // Where the system can't open another window, the
+                    // settings show as one inside the meter.
+                    let mut open = self.settings_open;
+                    egui::Window::new("Settings")
+                        .open(&mut open)
+                        .vscroll(true)
+                        .show(ctx, |ui| self.settings_body(ui, &t));
+                    self.settings_open &= open;
+                } else {
+                    egui::CentralPanel::default()
+                        .frame(
+                            egui::Frame::new()
+                                .fill(t.window)
+                                .inner_margin(egui::Margin::symmetric(18, 14)),
+                        )
+                        .show(ctx, |ui| {
+                            ui.spacing_mut().scroll = egui::style::ScrollStyle::thin();
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| self.settings_body(ui, &t));
+                        });
+                }
+            },
+        );
+    }
+
+    fn settings_body(&mut self, ui: &mut Ui, t: &Tokens) {
+        let ctx = ui.ctx().clone();
         let before_interval = self.s.interval_ms;
         let before_adaptor = self.s.adaptor.clone();
-        let mut on_top = self.s.on_top;
-        let mut system_bar = self.s.system_title_bar;
-        let mut units = self.s.units;
-        let lan_known = self.sampler.lan_known;
-        let adaptors = self.adaptors.clone();
+        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
         let s = &mut self.s;
-        hifi::drawer(ctx, t, "Settings", &mut open, |ui| {
-            hifi::look_settings(ui, t, &mut s.finish);
 
-            hifi::drawer_heading(ui, t, "Display");
-            if lan_known {
-                let names: Vec<&str> = Show::ALL.iter().map(|v| v.name()).collect();
-                let sel = Show::ALL.iter().position(|v| *v == s.show).unwrap_or(0);
-                if let Some(i) = seg_row(ui, t, "Show", "show", &names, sel) {
-                    s.show = Show::ALL[i];
-                }
-            } else {
-                ui.label(
-                    egui::RichText::new(
-                        "Internet and LAN apart need Linux for now; this shows all traffic.",
-                    )
-                    .font(hifi::ui_font(12.0))
-                    .color(t.dim),
-                );
+        heading(ui, t, "Look", true);
+        row(ui, t, "Glass", |ui| {
+            for b in Build::ALL {
+                ui.selectable_value(&mut s.glass.build, b, b.name());
             }
-            if let Some(i) = seg_row(
-                ui,
-                t,
-                "Graph",
-                "graph",
-                &["Overlaid", "Mirrored"],
-                s.mirrored as usize,
-            ) {
-                s.mirrored = i == 1;
-            }
-            let names = ["1 min", "2 min", "5 min", "10 min"];
-            let sel = HISTORIES
-                .iter()
-                .position(|h| *h == s.history_s)
-                .unwrap_or(1);
-            if let Some(i) = seg_row(ui, t, "History", "history", &names, sel) {
-                s.history_s = HISTORIES[i];
-            }
-            let fmt = s.format();
-            let fixed = fmt.fixed_scales();
-            let mut items = vec!["Follow the traffic".to_string()];
-            items.extend(fixed.iter().map(|v| fmt.mark(*v)));
-            let sel = if s.scale <= 0.0 {
-                0
-            } else {
-                match fixed.iter().position(|v| (v / s.scale - 1.0).abs() < 1e-6) {
-                    Some(i) => i + 1,
-                    // A scale from the other units, until another is chosen.
-                    None => {
-                        items.push(fmt.mark(s.scale));
-                        items.len() - 1
-                    }
-                }
-            };
-            let r = hifi::drawer_row(ui, t, "Scale", 170.0);
-            if let Some(i) = hifi::select(ui, r, "scale", t, &items, sel) {
-                s.scale = if i == 0 {
-                    0.0
-                } else {
-                    fixed.get(i - 1).copied().unwrap_or(s.scale)
-                };
-            }
-            switch_row(ui, t, "Logarithmic scale", "log", &mut s.log_scale);
-
-            hifi::drawer_heading(ui, t, "Speeds");
-            if let Some(i) = seg_row(
-                ui,
-                t,
-                "Count in",
-                "units",
-                &["Bits", "Bytes"],
-                (units == Units::Bytes) as usize,
-            ) {
-                units = [Units::Bits, Units::Bytes][i];
-            }
-            let shown = Format {
-                prefix: Prefix::Auto,
-                ..s.format()
-            };
-            let names = [
-                "Auto".to_string(),
-                shown.unit(1),
-                shown.unit(2),
-                shown.unit(3),
-            ];
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            let sel = Prefix::ALL.iter().position(|p| *p == s.prefix).unwrap_or(0);
-            if let Some(i) = seg_row(ui, t, "Unit", "prefix", &names, sel) {
-                s.prefix = Prefix::ALL[i];
-            }
-            if s.units == Units::Bytes {
-                switch_row(ui, t, "Powers of 1024 (KiB, MiB)", "binary", &mut s.binary);
-            }
-            let names = ["½ s", "1 s", "2 s"];
-            let sel = INTERVALS
-                .iter()
-                .position(|v| *v == s.interval_ms)
-                .unwrap_or(1);
-            if let Some(i) = seg_row(ui, t, "Update every", "interval", &names, sel) {
-                s.interval_ms = INTERVALS[i];
-            }
-
-            hifi::drawer_heading(ui, t, "Adaptor");
-            let mut items = vec!["All adaptors".to_string()];
-            items.extend(adaptors.iter().map(|(_, l)| l.clone()));
-            let mut sel = match &s.adaptor {
-                None => 0,
-                Some(id) => adaptors
-                    .iter()
-                    .position(|(a, _)| a == id)
-                    .map_or(usize::MAX, |i| i + 1),
-            };
-            if sel == usize::MAX {
-                items.push(format!(
-                    "{} (not found)",
-                    s.adaptor.as_deref().unwrap_or("")
-                ));
-                sel = items.len() - 1;
-            }
-            let r = hifi::drawer_row(ui, t, "Measure", 190.0);
-            if let Some(i) = hifi::select(ui, r, "adaptor", t, &items, sel) {
-                if i == 0 {
-                    s.adaptor = None;
-                } else if let Some((id, _)) = adaptors.get(i - 1) {
-                    s.adaptor = Some(id.clone());
-                }
-            }
-
-            hifi::drawer_heading(ui, t, "Window");
-            switch_row(ui, t, "Stay on top", "on-top", &mut on_top);
-            switch_row(
-                ui,
-                t,
-                "Use the system title bar",
-                "system-bar",
-                &mut system_bar,
-            );
-
-            hifi::drawer_heading(ui, t, "Keys");
-            for (k, what) in [
-                ("H", "Hide or show the title strip"),
-                ("T", "Stay on top, or not"),
-                ("Right-click", "Quick choices"),
-            ] {
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [84.0, 18.0],
-                        egui::Label::new(
-                            egui::RichText::new(k).font(hifi::num(12.0)).color(t.text),
-                        ),
-                    );
-                    ui.label(
-                        egui::RichText::new(what)
-                            .font(hifi::ui_font(12.5))
-                            .color(t.dim),
-                    );
-                });
-            }
-            ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new(format!("NM-001 · NET METER · V{VERSION}"))
-                    .font(hifi::semi(9.5))
-                    .color(t.dim),
+        });
+        row(ui, t, "Opacity", |ui| {
+            ui.add(
+                egui::Slider::new(&mut s.glass.opacity, glass::OPACITY_MIN..=1.0).show_value(false),
             );
         });
-        self.settings_open = open;
+        ui.label(label_text(t, "Download"));
+        let look = s.glass;
+        if let Some(c) = glass::swatches(ui, t, &look, s.glass.down) {
+            s.glass.down = c;
+        }
+        ui.label(label_text(t, "Upload"));
+        if let Some(c) = glass::swatches(ui, t, &look, s.glass.up) {
+            s.glass.up = c;
+        }
+
+        heading(ui, t, "Display", false);
+        if self.sampler.lan_known {
+            row(ui, t, "Show", |ui| {
+                for v in Show::ALL {
+                    ui.selectable_value(&mut s.show, v, v.name());
+                }
+            });
+        } else {
+            ui.label(
+                egui::RichText::new(
+                    "Internet and LAN apart need Linux for now; this shows all traffic.",
+                )
+                .font(glass::regular(12.5))
+                .color(t.ink2),
+            );
+        }
+        row(ui, t, "Graph", |ui| {
+            ui.selectable_value(&mut s.mirrored, false, "Overlaid");
+            ui.selectable_value(&mut s.mirrored, true, "Mirrored");
+        });
+        row(ui, t, "History", |ui| {
+            for (v, n) in HISTORIES.iter().zip(["1 min", "2 min", "5 min", "10 min"]) {
+                ui.selectable_value(&mut s.history_s, *v, n);
+            }
+        });
+        let fmt = s.format();
+        let fixed = fmt.fixed_scales();
+        row(ui, t, "Scale", |ui| {
+            let shown = if s.scale > 0.0 {
+                fmt.mark(s.scale)
+            } else {
+                "Follow the traffic".to_string()
+            };
+            egui::ComboBox::from_id_salt("scale")
+                .selected_text(shown)
+                .width(170.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.scale, 0.0, "Follow the traffic");
+                    for v in &fixed {
+                        ui.selectable_value(&mut s.scale, *v, fmt.mark(*v));
+                    }
+                });
+        });
+        row(ui, t, "Logarithmic", |ui| {
+            ui.checkbox(&mut s.log_scale, "");
+        });
+
+        heading(ui, t, "Speeds", false);
+        let mut units = s.units;
+        row(ui, t, "Count in", |ui| {
+            ui.selectable_value(&mut units, Units::Bits, "Bits");
+            ui.selectable_value(&mut units, Units::Bytes, "Bytes");
+        });
+        let names = Format {
+            prefix: Prefix::Auto,
+            ..s.format()
+        };
+        row(ui, t, "Unit", |ui| {
+            for (i, p) in Prefix::ALL.into_iter().enumerate() {
+                let n = if i == 0 {
+                    "Auto".to_string()
+                } else {
+                    names.unit(i as i32)
+                };
+                ui.selectable_value(&mut s.prefix, p, n);
+            }
+        });
+        if s.units == Units::Bytes {
+            row(ui, t, "KiB, MiB", |ui| {
+                ui.checkbox(&mut s.binary, "Powers of 1024");
+            });
+        }
+        row(ui, t, "Update every", |ui| {
+            for (v, n) in INTERVALS.iter().zip(["½ s", "1 s", "2 s"]) {
+                ui.selectable_value(&mut s.interval_ms, *v, n);
+            }
+        });
+
+        heading(ui, t, "Adaptor", false);
+        let adaptors = self.adaptors.clone();
+        row(ui, t, "Measure", |ui| {
+            let shown = match &s.adaptor {
+                None => "All adaptors".to_string(),
+                Some(id) => adaptors
+                    .iter()
+                    .find(|(a, _)| a == id)
+                    .map_or(format!("{id} (not found)"), |(_, l)| l.clone()),
+            };
+            egui::ComboBox::from_id_salt("adaptor")
+                .selected_text(shown)
+                .width(190.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.adaptor, None, "All adaptors");
+                    for (id, l) in &adaptors {
+                        ui.selectable_value(&mut s.adaptor, Some(id.clone()), l);
+                    }
+                });
+        });
+
+        heading(ui, t, "Window", false);
+        let mut on_top = s.on_top;
+        let mut system_bar = s.system_title_bar;
+        ui.checkbox(&mut on_top, "Stay on top");
+        ui.checkbox(&mut s.controls, "Show the controls under the mouse");
+        ui.checkbox(&mut system_bar, "Use the system title bar");
+
+        heading(ui, t, "Keys", false);
+        for (k, what) in [
+            ("H", "Hide or show the controls"),
+            ("T", "Stay on top, or not"),
+            ("Right-click", "Quick choices"),
+        ] {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [84.0, 18.0],
+                    egui::Label::new(egui::RichText::new(k).font(glass::medium(12.5))),
+                );
+                ui.label(
+                    egui::RichText::new(what)
+                        .font(glass::regular(12.5))
+                        .color(t.ink2),
+                );
+            });
+        }
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(format!("NM-001 · Net Meter · v{VERSION}"))
+                .font(glass::regular(11.0))
+                .color(t.ink2),
+        );
+
         self.set_units(units);
         if on_top != self.s.on_top {
-            self.set_on_top(ctx, on_top);
+            self.set_on_top(&ctx, on_top);
         }
         if system_bar != self.s.system_title_bar {
             self.s.system_title_bar = system_bar;
-            ctx.send_viewport_cmd(ViewportCommand::Decorations(system_bar));
+            ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Decorations(system_bar));
         }
         if self.s.interval_ms != before_interval {
             self.sampler.set_interval(self.s.interval_ms);
@@ -663,70 +695,54 @@ impl NetMeterApp {
     }
 }
 
-/// A row in the drawer with a segmented control on the right.
-fn seg_row(
-    ui: &mut Ui,
-    t: &Tokens,
-    label: &str,
-    id: &str,
-    names: &[&str],
-    sel: usize,
-) -> Option<usize> {
-    let r = hifi::drawer_row(ui, t, label, 0.0);
-    let (_, picked) = hifi::segmented(
-        ui,
-        Pos2::new(r.right(), r.center().y),
-        true,
-        Id::new(id),
-        t,
-        names,
-        sel,
-        Seg::Plain,
-        &[],
-        &[],
-    );
-    picked
+fn label_text(t: &Tokens, s: &str) -> egui::RichText {
+    egui::RichText::new(s)
+        .font(glass::regular(13.5))
+        .color(t.ink)
 }
 
-/// A row in the drawer with a switch on the right.
-fn switch_row(ui: &mut Ui, t: &Tokens, label: &str, id: &str, on: &mut bool) {
-    let r = hifi::drawer_row(ui, t, label, 32.0);
-    let r = Rect::from_min_size(r.min + Vec2::new(0.0, 4.0), Vec2::new(32.0, 18.0));
-    if hifi::switch(ui, r, Id::new(id), t, *on).clicked() {
-        *on = !*on;
+/// A section heading in the settings: spaced capitals under a hairline.
+fn heading(ui: &mut Ui, t: &Tokens, s: &str, first: bool) {
+    if !first {
+        ui.add_space(8.0);
+        let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
+        ui.painter().rect_filled(r, 0, t.grid);
+        ui.add_space(4.0);
     }
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 18.0), Sense::hover());
+    glass::caps(
+        ui.painter(),
+        Pos2::new(r.left(), r.center().y),
+        s,
+        10.5,
+        t.ink2,
+        r.width(),
+    );
 }
 
-/// The badge's width, to place it by its left edge.
-fn badge_width(ui: &Ui, t: &Tokens) -> f32 {
-    let p = ui.painter();
-    let w = |s: &str, f| p.layout_no_wrap(s.to_string(), f, t.text).size().x;
-    w("Timster's Audio Works - ", hifi::ui_font(12.0)) + w("Net Meter", hifi::bold(12.0)) + 18.0
-}
-
-/// A small arrow, down for download and up for upload, in the line's
-/// colour.
-fn arrow(p: &Painter, c: Pos2, up: bool, colour: Color32) {
-    let s = if up { -1.0 } else { 1.0 };
-    p.add(Shape::convex_polygon(
-        vec![
-            c + Vec2::new(-4.0, -3.0 * s),
-            c + Vec2::new(4.0, -3.0 * s),
-            c + Vec2::new(0.0, 3.5 * s),
-        ],
-        colour,
-        Stroke::NONE,
-    ));
+/// A row in the settings: a label, then its control.
+fn row(ui: &mut Ui, t: &Tokens, label: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            Vec2::new(96.0, 22.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(96.0);
+                ui.label(label_text(t, label));
+            },
+        );
+        add(ui);
+    });
 }
 
 impl eframe::App for NetMeterApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        let t = Tokens::from_ctx(&ctx, &self.s.finish);
-        hifi::apply_visuals(&ctx, &t);
+        let t = Tokens::from_ctx(&ctx, &self.s.glass);
+        glass::apply_visuals(&ctx, &t);
         self.take_samples();
 
-        let free = ui.memory(|m| m.focused().is_none()) && !self.settings_open;
+        let free = ui.memory(|m| m.focused().is_none());
         let (h, key_t) = ui.input(|i| (i.key_pressed(Key::H), i.key_pressed(Key::T)));
         if free && h {
             self.s.controls = !self.s.controls;
@@ -736,19 +752,10 @@ impl eframe::App for NetMeterApp {
         }
 
         let screen = ui.max_rect();
-        hifi::faceplate(ui.painter(), screen, &t);
-        let display = if self.s.controls {
-            self.strip(ui, screen, &t);
-            Rect::from_min_max(
-                Pos2::new(screen.left() + 8.0, screen.top() + STRIP_H),
-                screen.max - Vec2::splat(8.0),
-            )
-        } else {
-            screen.shrink(4.0)
-        };
-        // The display moves the window, a double-click hides or shows the
-        // strip, and a right-click gives the quick choices.
-        let resp = ui.interact(display, Id::new("display"), Sense::click_and_drag());
+        glass::pane(ui.painter(), screen, &t);
+        // The glass moves the window, a double-click hides or shows the
+        // controls, and a right-click gives the quick choices.
+        let resp = ui.interact(screen, Id::new("display"), Sense::click_and_drag());
         if resp.double_clicked() {
             self.s.controls = !self.s.controls;
         } else if resp.drag_started_by(egui::PointerButton::Primary) && !self.s.system_title_bar {
@@ -756,11 +763,13 @@ impl eframe::App for NetMeterApp {
             ctx.stop_dragging();
         }
         resp.context_menu(|ui| self.quick_menu(ui));
-        self.display(ui, display, &t);
-        ui.painter()
-            .rect_stroke(screen, 0, Stroke::new(1.0, t.edge), StrokeKind::Inside);
+        self.display(ui, screen, &t);
+        let under_mouse = ui.input(|i| i.pointer.hover_pos()).is_some();
+        if self.s.controls && !self.s.system_title_bar && under_mouse {
+            self.controls(ui, screen, &t);
+        }
 
-        self.settings(&ctx, &t);
+        self.settings_window(&ctx);
         if !self.s.system_title_bar {
             hifi::resize_edges(ui, screen);
         }
@@ -771,9 +780,9 @@ impl eframe::App for NetMeterApp {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        Tokens::new(&self.s.finish, false)
-            .face_bottom
-            .to_normalized_gamma_f32()
+        // See-through: the pane draws the glass, and the corners show the
+        // desktop.
+        [0.0; 4]
     }
 }
 
@@ -788,5 +797,18 @@ mod tests {
         assert!(s.on_top);
         let s: Saved = serde_json::from_str(r#"{"units":"Bytes","prefix":"Mega"}"#).unwrap();
         assert_eq!(s.format().rate(2_500_000.0), "2.50 MB/s");
+    }
+
+    #[test]
+    fn version_0_1_settings_load_on_glass() {
+        let s: Saved = serde_json::from_str(
+            r#"{"finish":{"finish":"Spool","build":"Dark","accent":"Amber"},"show":"Lan","controls":false}"#,
+        )
+        .unwrap();
+        assert_eq!(s.show, Show::Lan);
+        assert!(!s.controls);
+        assert_eq!(s.glass, glass::Look::default());
+        assert_eq!(s.glass.down, glass::Colour::Ok);
+        assert_eq!(s.glass.up, glass::Colour::Pen2);
     }
 }
