@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Settings open beside the meter, to its right, or to its left when it sits at the right edge of the screen, instead of wherever the system put them.
+- Start when I log in, in Settings (Window): an autostart entry on Linux, a Run entry for your user on Windows; no administrator needed.
+
 ## 0.2.0 – 2026-11-01
 
 - The Glass look, from the panel's review: frosted or smoked glass with the desktop showing through, no faceplate, Outfit type with light figures, and the controls (settings, stay on top, minimise, close) in a pill that appears only under the mouse.

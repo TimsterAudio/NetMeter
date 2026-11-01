@@ -16,7 +16,7 @@ It only reads the computer's own counters. It never sends anything.
 - **The controls** (settings, stay on top, minimise, close) appear in a pill at the bottom right while the mouse is over the window. **H**, or a double-click, turns them off for a bare gadget. Drag anywhere to move the window; resize from any edge.
 - **T** keeps it on top of other windows, or not (on by default).
 - **Right-click** for the everyday choices: what to show, bits or bytes, frosted or smoked, mirrored, stay on top, Settings.
-- **Settings** open in a window of their own: the glass (automatic, frosted or smoked; how see-through) and the download and upload colours; Internet, LAN, both or all traffic; overlaid (both up from the bottom) or mirrored (download up from the middle, upload down); 1 to 10 minutes of history; a scale that follows the traffic or a fixed top (1 Mb/s to 10 Gb/s), linear or logarithmic; bits or bytes, the unit automatic or fixed, powers of 1000 or 1024; how often it reads (½, 1 or 2 s); which adaptor.
+- **Settings** open in a window of their own, beside the meter: the glass (automatic, frosted or smoked; how see-through) and the download and upload colours; Internet, LAN, both or all traffic; overlaid (both up from the bottom) or mirrored (download up from the middle, upload down); 1 to 10 minutes of history; a scale that follows the traffic or a fixed top (1 Mb/s to 10 Gb/s), linear or logarithmic; bits or bytes, the unit automatic or fixed, powers of 1000 or 1024; how often it reads (½, 1 or 2 s); which adaptor; and **Start when I log in** (an entry in `~/.config/autostart` on Linux, or in your user's Run list on Windows; the meter keeps it pointing at the copy you last ran).
 
 The glass shows the desktop through where the system composites windows (Windows, and Linux desktops with a compositor, which is nearly all of them); elsewhere it's solid.
 
@@ -56,6 +56,7 @@ cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # Win
 |---|---|
 | `src/main.rs` | The window. |
 | `src/app.rs` | The display (graphs, scale, readings, hover), the controls under the mouse, the quick menu and the settings window. |
+| `src/autostart.rs` | Starting when the user logs in (Linux autostart entry, Windows Run key). |
 | `src/glass.rs` | The Glass look: colours, Outfit type, the traces, the control pill and its icons. |
 | `src/rates.rs` | Rates, units and formatting, scales, and the history. Unit tested. |
 | `src/lan.rs` | LAN or Internet, by address. Unit tested. |

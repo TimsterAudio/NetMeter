@@ -7,6 +7,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod autostart;
 mod glass;
 mod icon;
 // Windows has no LAN figure yet (see net/windows.rs).

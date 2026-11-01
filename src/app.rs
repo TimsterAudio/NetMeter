@@ -7,6 +7,7 @@
 //! window. Drag anywhere to move it; right-click for the everyday choices.
 //! Settings open in a window of their own.
 
+use crate::autostart;
 use crate::glass::{self, Build, Icon, Tokens};
 use crate::net;
 use crate::rates::{self, Format, History, Lane, Prefix, Rate, Sample, Show, Units};
@@ -22,6 +23,10 @@ const STORAGE_KEY: &str = "taw-netmeter";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SIZE: Vec2 = Vec2::new(420.0, 180.0);
 pub const MIN_SIZE: Vec2 = Vec2::new(200.0, 90.0);
+/// The settings window's size when it opens.
+const SETTINGS_SIZE: Vec2 = Vec2::new(380.0, 600.0);
+/// The room between the meter and the settings beside it.
+const SETTINGS_GAP: f32 = 12.0;
 const HISTORIES: [u32; 4] = [60, 120, 300, 600];
 const INTERVALS: [u32; 3] = [500, 1000, 2000];
 
@@ -100,6 +105,12 @@ pub struct NetMeterApp {
     history: History,
     error: Option<String>,
     settings_open: bool,
+    /// Where the settings window opens: beside the meter, worked out when
+    /// it's opened (`None` where the system won't say where windows are).
+    settings_at: Option<Pos2>,
+    /// Whether the meter starts when the user logs in, as the system has it.
+    start_at_login: bool,
+    login_error: Option<String>,
     /// The adaptors, for the menu: (id, label).
     adaptors: Vec<(String, String)>,
 }
@@ -119,6 +130,12 @@ impl NetMeterApp {
             cc.egui_ctx
                 .send_viewport_cmd(ViewportCommand::Decorations(true));
         }
+        // Keep the login entry pointing at this copy, wherever it was run
+        // from last.
+        let start_at_login = autostart::is_enabled();
+        if start_at_login {
+            let _ = autostart::set(true);
+        }
         let sampler = Sampler::start(s.interval_ms, s.adaptor.clone(), cc.egui_ctx.clone());
         NetMeterApp {
             s,
@@ -126,6 +143,9 @@ impl NetMeterApp {
             history: History::default(),
             error: None,
             settings_open: false,
+            settings_at: None,
+            start_at_login,
+            login_error: None,
             adaptors: Vec::new(),
         }
     }
@@ -172,10 +192,14 @@ impl NetMeterApp {
         }
     }
 
-    fn open_settings(&mut self) {
+    fn open_settings(&mut self, ctx: &egui::Context) {
         self.settings_open = !self.settings_open;
         if self.settings_open {
             self.refresh_adaptors();
+            self.start_at_login = autostart::is_enabled();
+            let (meter, monitor) =
+                ctx.input(|i| (i.viewport().outer_rect, i.viewport().monitor_size));
+            self.settings_at = meter.map(|m| beside(m, SETTINGS_SIZE, monitor));
         }
     }
 
@@ -395,7 +419,7 @@ impl NetMeterApp {
             );
             if glass::icon_button(ui, b, Id::new(("glass-btn", i)), t, icon, tip).clicked() {
                 match icon {
-                    Icon::Settings => self.open_settings(),
+                    Icon::Settings => self.open_settings(&ctx),
                     Icon::OnTop(on) => self.set_on_top(&ctx, !on),
                     Icon::Minimise => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
                     Icon::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
@@ -443,7 +467,7 @@ impl NetMeterApp {
             ui.close();
         }
         if ui.button("Settings…").clicked() {
-            self.open_settings();
+            self.open_settings(&ctx);
             ui.close();
         }
     }
@@ -474,12 +498,15 @@ impl NetMeterApp {
         if !self.settings_open {
             return;
         }
-        let builder = ViewportBuilder::default()
+        let mut builder = ViewportBuilder::default()
             .with_title("Net Meter settings")
             .with_app_id("taw-netmeter")
-            .with_inner_size([380.0, 600.0])
+            .with_inner_size(SETTINGS_SIZE)
             .with_min_inner_size([320.0, 300.0])
             .with_icon(crate::icon::icon());
+        if let Some(at) = self.settings_at {
+            builder = builder.with_position(at);
+        }
         ctx.show_viewport_immediate(
             ViewportId::from_hash_of("taw-netmeter-settings"),
             builder,
@@ -651,6 +678,18 @@ impl NetMeterApp {
         ui.checkbox(&mut on_top, "Stay on top");
         ui.checkbox(&mut s.controls, "Show the controls under the mouse");
         ui.checkbox(&mut system_bar, "Use the system title bar");
+        let mut login = self.start_at_login;
+        if ui.checkbox(&mut login, "Start when I log in").changed() {
+            self.login_error = autostart::set(login).err();
+            self.start_at_login = autostart::is_enabled();
+        }
+        if let Some(e) = &self.login_error {
+            ui.label(
+                egui::RichText::new(format!("Couldn't change that: {e}"))
+                    .font(glass::regular(12.0))
+                    .color(t.ink2),
+            );
+        }
 
         heading(ui, t, "Keys", false);
         for (k, what) in [
@@ -693,6 +732,30 @@ impl NetMeterApp {
             self.history.clear();
         }
     }
+}
+
+/// Where a window of `size` goes beside the meter at `meter`: to its right
+/// if it fits on the meter's screen, otherwise to its left, its top level
+/// with the meter's and kept on the screen. The screen is taken to be the
+/// `monitor`-sized tile of the desktop the meter's top left is in, which is
+/// right for one screen, however wide, and for screens side by side.
+fn beside(meter: Rect, size: Vec2, monitor: Option<Vec2>) -> Pos2 {
+    let right = Pos2::new(meter.right() + SETTINGS_GAP, meter.top());
+    let Some(mon) = monitor.filter(|m| m.x > 0.0 && m.y > 0.0) else {
+        return right;
+    };
+    let origin = Pos2::new(
+        (meter.left() / mon.x).floor() * mon.x,
+        (meter.top() / mon.y).floor() * mon.y,
+    );
+    let screen = Rect::from_min_size(origin, mon);
+    let x = if right.x + size.x <= screen.right() {
+        right.x
+    } else {
+        (meter.left() - SETTINGS_GAP - size.x).max(screen.left())
+    };
+    let y = meter.top().min(screen.bottom() - size.y).max(screen.top());
+    Pos2::new(x, y)
 }
 
 fn label_text(t: &Tokens, s: &str) -> egui::RichText {
@@ -797,6 +860,27 @@ mod tests {
         assert!(s.on_top);
         let s: Saved = serde_json::from_str(r#"{"units":"Bytes","prefix":"Mega"}"#).unwrap();
         assert_eq!(s.format().rate(2_500_000.0), "2.50 MB/s");
+    }
+
+    #[test]
+    fn settings_open_beside_the_meter() {
+        let size = SETTINGS_SIZE;
+        let wide = Some(Vec2::new(5120.0, 1440.0));
+        // Room on the right: just to the right, level with the meter.
+        let m = Rect::from_min_size(Pos2::new(100.0, 200.0), DEFAULT_SIZE);
+        assert_eq!(beside(m, size, wide), Pos2::new(532.0, 200.0));
+        // At the right edge of a super-wide screen: just to its left.
+        let m = Rect::from_min_size(Pos2::new(4680.0, 40.0), DEFAULT_SIZE);
+        assert_eq!(beside(m, size, wide), Pos2::new(4288.0, 40.0));
+        // Near the bottom: lifted to stay on the screen.
+        let m = Rect::from_min_size(Pos2::new(100.0, 1300.0), DEFAULT_SIZE);
+        assert_eq!(beside(m, size, wide).y, 840.0);
+        // The right-hand screen of two side by side.
+        let two = Some(Vec2::new(1920.0, 1080.0));
+        let m = Rect::from_min_size(Pos2::new(3800.0 - 420.0, 0.0), DEFAULT_SIZE);
+        assert_eq!(beside(m, size, two).x, 3380.0 - 12.0 - 380.0);
+        // Nothing known about the screen: to the right.
+        assert_eq!(beside(m, size, None), Pos2::new(3812.0, 0.0));
     }
 
     #[test]
