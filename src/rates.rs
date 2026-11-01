@@ -259,6 +259,38 @@ impl Format {
         }
     }
 
+    /// `v` in the unit `power` steps up from bits or bytes a second (1 for
+    /// kb/s or kB/s, 2 for Mb/s, 3 for Gb/s), as bytes a second.
+    pub fn bytes_from(&self, v: f64, power: i32) -> f64 {
+        let x = v * self.base().powi(power);
+        match self.units {
+            Units::Bits => x / 8.0,
+            Units::Bytes => x,
+        }
+    }
+
+    /// Bytes a second as a figure in the unit `power`.
+    pub fn in_unit(&self, bytes_s: f64, power: i32) -> f64 {
+        self.scaled(bytes_s) / self.base().powi(power)
+    }
+
+    /// The unit, kilo to giga, a figure reads best in.
+    pub fn best_power(&self, bytes_s: f64) -> i32 {
+        Format {
+            prefix: Prefix::Auto,
+            ..*self
+        }
+        .power_for(self.scaled(bytes_s))
+        .clamp(1, 3)
+    }
+
+    /// Whether a scale is one of [`Format::fixed_scales`].
+    pub fn is_fixed(&self, bytes_s: f64) -> bool {
+        self.fixed_scales()
+            .iter()
+            .any(|v| (v / bytes_s - 1.0).abs() < 1e-6)
+    }
+
     /// The fixed scales to choose from, in bytes a second.
     pub fn fixed_scales(&self) -> Vec<f64> {
         match self.units {
@@ -418,6 +450,22 @@ mod tests {
         assert_eq!(bits.mark(bits.nice_ceiling(1_550_000.0)), "20 Mb/s");
         assert_eq!(bits.mark(2.5e9 / 8.0), "2.5 Gb/s");
         assert_eq!(bin.mark(1024.0 * 1024.0), "1 MiB/s");
+    }
+
+    #[test]
+    fn custom_scales() {
+        let bits = f(Units::Bits, Prefix::Auto, false);
+        // 300 Mb/s
+        let b = bits.bytes_from(300.0, 2);
+        assert_eq!(b, 37_500_000.0);
+        assert_eq!(bits.in_unit(b, 2), 300.0);
+        assert_eq!(bits.best_power(b), 2);
+        assert_eq!(bits.mark(b), "300 Mb/s");
+        assert!(!bits.is_fixed(b));
+        assert!(bits.is_fixed(bits.bytes_from(100.0, 2)));
+        let bin = f(Units::Bytes, Prefix::Auto, true);
+        assert_eq!(bin.bytes_from(2.0, 2), 2.0 * 1024.0 * 1024.0);
+        assert_eq!(bin.best_power(10.0), 1);
     }
 
     #[test]

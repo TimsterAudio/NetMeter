@@ -111,6 +111,9 @@ pub struct NetMeterApp {
     /// Whether the meter starts when the user logs in, as the system has it.
     start_at_login: bool,
     login_error: Option<String>,
+    /// While a custom scale is being set: the unit it's typed in (1 kilo,
+    /// 2 mega, 3 giga).
+    custom_power: Option<i32>,
     /// The adaptors, for the menu: (id, label).
     adaptors: Vec<(String, String)>,
 }
@@ -146,6 +149,7 @@ impl NetMeterApp {
             settings_at: None,
             start_at_login,
             login_error: None,
+            custom_power: None,
             adaptors: Vec::new(),
         }
     }
@@ -478,8 +482,10 @@ impl NetMeterApp {
         if self.s.units == u {
             return;
         }
+        let was_fixed = self.s.format().is_fixed(self.s.scale);
         self.s.units = u;
-        if self.s.scale > 0.0 {
+        // A custom scale stays as it is, only written in the new units.
+        if self.s.scale > 0.0 && was_fixed {
             let was = self.s.scale;
             self.s.scale = self
                 .s
@@ -600,8 +606,14 @@ impl NetMeterApp {
         });
         let fmt = s.format();
         let fixed = fmt.fixed_scales();
+        let mut custom = self.custom_power;
+        if custom.is_none() && s.scale > 0.0 && !fmt.is_fixed(s.scale) {
+            custom = Some(fmt.best_power(s.scale));
+        }
         row(ui, t, "Scale", |ui| {
-            let shown = if s.scale > 0.0 {
+            let shown = if custom.is_some() {
+                "Custom".to_string()
+            } else if s.scale > 0.0 {
                 fmt.mark(s.scale)
             } else {
                 "Follow the traffic".to_string()
@@ -610,12 +622,61 @@ impl NetMeterApp {
                 .selected_text(shown)
                 .width(170.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut s.scale, 0.0, "Follow the traffic");
+                    if ui
+                        .selectable_label(custom.is_none() && s.scale <= 0.0, "Follow the traffic")
+                        .clicked()
+                    {
+                        s.scale = 0.0;
+                        custom = None;
+                    }
                     for v in &fixed {
-                        ui.selectable_value(&mut s.scale, *v, fmt.mark(*v));
+                        let on = custom.is_none() && (v / s.scale - 1.0).abs() < 1e-6;
+                        if ui.selectable_label(on, fmt.mark(*v)).clicked() {
+                            s.scale = *v;
+                            custom = None;
+                        }
+                    }
+                    if ui.selectable_label(custom.is_some(), "Custom…").clicked() {
+                        // Start from the fixed scale chosen, or 100 Mb/s.
+                        if s.scale <= 0.0 {
+                            s.scale = 12_500_000.0;
+                        }
+                        custom = Some(fmt.best_power(s.scale));
                     }
                 });
         });
+        if let Some(mut power) = custom {
+            row(ui, t, "", |ui| {
+                let mut v = fmt.in_unit(s.scale, power);
+                let speed = (v * 0.01).max(0.1);
+                let r = ui.add(
+                    egui::DragValue::new(&mut v)
+                        .range(0.1..=9999.0)
+                        .speed(speed)
+                        .max_decimals(2),
+                );
+                let names = Format {
+                    prefix: Prefix::Auto,
+                    ..fmt
+                };
+                let before = power;
+                egui::ComboBox::from_id_salt("scale-unit")
+                    .selected_text(names.unit(power))
+                    .width(72.0)
+                    .show_ui(ui, |ui| {
+                        for p in 1..=3 {
+                            ui.selectable_value(&mut power, p, names.unit(p));
+                        }
+                    });
+                // Picking another unit keeps the figure: 300 Mb/s becomes
+                // 300 Gb/s.
+                if r.changed() || power != before {
+                    s.scale = fmt.bytes_from(v.clamp(0.1, 9999.0), power);
+                }
+            });
+            custom = Some(power);
+        }
+        self.custom_power = custom;
         row(ui, t, "Logarithmic", |ui| {
             ui.checkbox(&mut s.log_scale, "");
         });

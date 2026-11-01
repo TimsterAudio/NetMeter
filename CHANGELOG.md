@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Settings open beside the meter, to its right, or to its left when it sits at the right edge of the screen, instead of wherever the system put them.
+- A custom scale: choose Custom… under Scale and type the top of the graph in kb/s, Mb/s or Gb/s (or kB/s, MB/s, GB/s), say 300 Mb/s for your broadband's speed.
 - Start when I log in, in Settings (Window): an autostart entry on Linux, a Run entry for your user on Windows; no administrator needed.
 
 ## 0.2.0 – 2026-11-01
