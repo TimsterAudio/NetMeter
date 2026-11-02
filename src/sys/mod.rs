@@ -73,3 +73,34 @@ impl SysMeter {
         (sys, snap)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reads this computer (on CI, a Linux and a Windows runner): whatever
+    /// it has, the basics must come back and be sane.
+    #[test]
+    fn reads_this_computer() {
+        let mut m = SysMeter::new();
+        m.read(1.0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let (sys, snap) = m.read(0.3);
+        let (used, total) = sys.mem.expect("memory");
+        assert!(used > 0 && used <= total);
+        assert!(
+            sys.cpu.is_some_and(|c| (0.0..=1.0).contains(&c)),
+            "{:?}",
+            sys.cpu
+        );
+        assert!(!snap.cores.is_empty());
+        assert!(snap.cores.iter().all(|c| (0.0..=1.0).contains(c)));
+        if let Some(d) = sys.disk {
+            assert!(d.down >= 0.0 && d.up >= 0.0);
+        }
+        for v in &snap.volumes {
+            assert!(v.used <= v.total, "{v:?}");
+        }
+        println!("{sys:?}\n{snap:?}");
+    }
+}
