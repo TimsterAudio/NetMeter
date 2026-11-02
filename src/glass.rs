@@ -122,6 +122,10 @@ pub struct Tokens {
     pub pen: Color32,
     pub down: Color32,
     pub up: Color32,
+    /// Cool, warm and hot, for temperatures and full disks.
+    pub ok: Color32,
+    pub warn: Color32,
+    pub hot: Color32,
 }
 
 const fn hex(v: u32) -> Color32 {
@@ -194,12 +198,29 @@ impl Tokens {
             ink2,
             pen: colour(Colour::Pen),
             down: colour(look.down),
+            ok: colour(Colour::Ok),
+            warn: colour(Colour::Warn),
+            hot: colour(Colour::Red),
             up: colour(look.up),
         }
     }
 
     pub fn from_ctx(ctx: &egui::Context, look: &Look) -> Tokens {
         Tokens::new(look, ctx.system_theme() == Some(egui::Theme::Dark))
+    }
+
+    /// Green to gold to red, for 0 (cool or empty) to 1 (hot or full).
+    pub fn heat(&self, h: f32) -> Color32 {
+        let lerp = |a: Color32, b: Color32, k: f32| {
+            let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round() as u8;
+            Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
+        };
+        let h = h.clamp(0.0, 1.0);
+        if h < 0.5 {
+            lerp(self.ok, self.warn, h * 2.0)
+        } else {
+            lerp(self.warn, self.hot, (h - 0.5) * 2.0)
+        }
     }
 
     /// A palette colour as it shows in this build, for the swatches.
@@ -390,6 +411,8 @@ pub enum Icon {
     Settings,
     /// Stay on top: a ring, with a dot when on.
     OnTop(bool),
+    /// Grow into the dashboard (`false`), or back to the meter (`true`).
+    Expand(bool),
     Minimise,
     Close,
 }
@@ -430,6 +453,19 @@ pub fn icon_button(ui: &mut Ui, r: Rect, id: Id, t: &Tokens, icon: Icon, tip: &s
                 p.circle_filled(m, 2.8, t.pen);
             } else {
                 p.circle_stroke(m, 2.2, Stroke::new(1.2, c));
+            }
+        }
+        Icon::Expand(expanded) => {
+            // Two arrows to the corners: out to grow, in to shrink.
+            for d in [Vec2::new(1.0, -1.0), Vec2::new(-1.0, 1.0)] {
+                let (tip, tail, k) = if expanded {
+                    (m + d * 1.5, m + d * 6.0, 1.0)
+                } else {
+                    (m + d * 6.0, m + d * 1.5, -1.0)
+                };
+                p.line_segment([tail, tip], s);
+                p.line_segment([tip, tip + Vec2::new(d.x * 3.0 * k, 0.0)], s);
+                p.line_segment([tip, tip + Vec2::new(0.0, d.y * 3.0 * k)], s);
             }
         }
         Icon::Minimise => {

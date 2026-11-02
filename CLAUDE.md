@@ -1,13 +1,13 @@
 # TAW Net Meter: working conventions
 
-The Net Meter (NM-001) is Timster's Audio Works' desktop network monitor: download and upload rates, Internet and LAN, as scrolling graphs in a small window. Rust with egui (via eframe). Its look is **Glass**, from TAW-Panel's looks review (`docs/looks-review.html`, decided 2026-10-27): `src/glass.rs` holds it until a second utility needs it, then it moves into the shared `taw-panel` crate (TimsterAudio/TAW-Panel) beside `hifi`. The app still uses `taw-panel` (pinned by commit in Cargo.toml) for window resizing and the 0.1.0 settings type. The window is see-through, has no system title bar unless the user turns it on in Settings, and shows its controls only under the mouse; settings open in their own window.
+The Net Meter (NM-001) is Timster's Audio Works' desktop network monitor: download and upload rates, Internet and LAN, as scrolling graphs in a small window, which expands into a basic system dashboard (CPU, memory, disks, GPU, temperatures, USB). Rust with egui (via eframe). Its look is **Glass**, from TAW-Panel's looks review (`docs/looks-review.html`, decided 2026-10-27): `src/glass.rs` holds it until a second utility needs it, then it moves into the shared `taw-panel` crate (TimsterAudio/TAW-Panel) beside `hifi`. The app still uses `taw-panel` (pinned by commit in Cargo.toml) for window resizing and the 0.1.0 settings type. The window is see-through, has no system title bar unless the user turns it on in Settings, and shows its controls only under the mouse; settings open in their own window.
 
 ## Hard rules
 
 - **Native, not HTML.** No web views or browser shells.
 - **No network requests.** It only reads the computer's own counters. Fonts and the icon are built into the binary.
 - **No special rights.** It must work as an ordinary user; anything that needs administrator or root is optional and says so.
-- **Keep `rates.rs` and `lan.rs` free of UI and operating-system code**, and unit tested.
+- **Keep `rates.rs`, `lan.rs` and `metrics.rs` free of UI and operating-system code**, and unit tested. Each system's code goes in `net/` and `sys/`, and every reading is optional: a tile with nothing to show stays hidden.
 - **Never break saved settings.** `Saved` in `app.rs` uses `#[serde(default)]`. Add new fields with defaults, and never rename or repurpose existing ones.
 
 ## Files

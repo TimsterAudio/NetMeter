@@ -13,9 +13,11 @@ mod icon;
 // Windows has no LAN figure yet (see net/windows.rs).
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod lan;
+mod metrics;
 mod net;
 mod rates;
 mod sampler;
+mod sys;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

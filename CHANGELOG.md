@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The dashboard: the new expand button (in the controls, or on the right-click menu) grows the meter into a window of tiles, and back. Each mode keeps its own size. Settings, Dashboard picks the tiles; a tile with nothing to show on this computer stays hidden.
+- CPU: load over time, each core, the processor's name and temperature.
+- Memory: in use over time, and swap on Linux.
+- Disks: read and write rates over time, and how full each drive is.
+- GPU: load over time, video memory, temperature and power for NVIDIA cards (Linux and Windows) and AMD cards on Linux; load alone for other cards on Windows.
+- Temperatures and fans: every sensor Linux reports. On Windows, from LibreHardwareMonitor when it's running (Windows can't read them on its own), or the ACPI zones some computers report. °C or °F.
+- USB: what's plugged in, with each link's speed on Linux, and a notice when a device is plugged in or out (can be turned off).
+
 ## 0.3.0 – 2026-11-01
 
 - Settings open beside the meter, to its right, or to its left when it sits at the right edge of the screen, instead of wherever the system put them.

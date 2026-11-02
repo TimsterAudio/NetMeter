@@ -22,6 +22,24 @@ The glass shows the desktop through where the system composites windows (Windows
 
 ![The settings window, frosted and smoked](docs/screenshot-settings.png)
 
+## The dashboard
+
+The expand button in the controls (or **Expand into the dashboard** on the right-click menu) grows the meter into a dashboard of tiles; the same button goes back. The meter and the dashboard each remember their size. The tiles flow into as many columns as the window's width allows. **Settings, Dashboard** picks them; a tile with nothing to show on this computer (no GPU, say) stays hidden.
+
+![The dashboard on smoked glass](docs/screenshot-dashboard.png)
+
+| Tile | Linux | Windows |
+|---|---|---|
+| Internet, LAN, all traffic | As the meter. | As the meter (all traffic). |
+| CPU: load, each core, name, temperature | `/proc/stat`, `/proc/cpuinfo`, hwmon | Performance counters; temperature as below |
+| Memory: in use, swap | `/proc/meminfo` | `GlobalMemoryStatusEx` (no swap) |
+| Disks: read and write, how full each drive is | `/proc/diskstats` (the real disks), the mounts | Performance counters, the drive letters (fixed and removable) |
+| GPU: load, video memory, temperature, power | NVIDIA (NVML) and AMD (its own files) | NVIDIA (NVML); other cards: load only |
+| Temperatures and fans | Every hwmon sensor: CPU, GPU, NVMe, board | From [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) while it runs; otherwise the ACPI zones, where the computer has them |
+| USB: what's plugged in, plugged in and out | `/sys/bus/usb`, with each link's speed (spot a drive on a USB 2 port) | SetupAPI, without the speed |
+
+All of it works as an ordinary user. Windows can't read the CPU's temperature without a driver, which the meter won't install; LibreHardwareMonitor has one and shares its readings, so run it (it can start with Windows and sit in the tray) and the meter picks them up within half a minute. Drive health (SMART) and network use per program need administrator rights on both systems, so they're left out.
+
 ## Internet and LAN
 
 The adaptors' own counters give the total. The LAN's share comes from the kernel's list of TCP connections (sock_diag, which needs no special rights): bytes to and from private addresses (10/8, 172.16/12, 192.168/16, link-local, IPv6 unique-local and the computer's own IPv6 prefixes), with the headers each segment carries added so it matches what the adaptor counts. The Internet is the rest.
@@ -56,11 +74,14 @@ cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # Win
 |---|---|
 | `src/main.rs` | The window. |
 | `src/app.rs` | The display (graphs, scale, readings, hover), the controls under the mouse, the quick menu and the settings window. |
+| `src/app/dash.rs` | The dashboard: the grid of tiles and each tile. |
+| `src/metrics.rs` | The system's readings and the arithmetic on them (Linux's text parsed here). Unit tested. |
+| `src/sys/` | Each system's readings: Linux (`/proc`, `/sys`), Windows (performance counters, WMI for LibreHardwareMonitor, SetupAPI), and NVIDIA's NVML on both. |
 | `src/autostart.rs` | Starting when the user logs in (Linux autostart entry, Windows Run key). |
 | `src/glass.rs` | The Glass look: colours, Outfit type, the traces, the control pill and its icons. |
 | `src/rates.rs` | Rates, units and formatting, scales, and the history. Unit tested. |
 | `src/lan.rs` | LAN or Internet, by address. Unit tested. |
-| `src/sampler.rs` | Reads the counters on its own thread at the chosen interval. |
+| `src/sampler.rs` | Reads the network and the system on its own thread at the chosen interval. |
 | `src/net/` | Each system's counters: Linux (`/proc/net/dev`, sock_diag), Windows (`GetIfTable2`). |
 | `src/icon.rs` | The window icon. |
 | `assets/fonts/` | Outfit (Light, Regular, Medium), under the SIL Open Font License (`OFL.txt`). |

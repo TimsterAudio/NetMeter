@@ -25,6 +25,8 @@ pub struct Sample {
     pub at: f64,
     pub all: Rate,
     pub lan: Option<Rate>,
+    /// CPU, memory, disks, GPU and temperatures at the same moment.
+    pub sys: crate::metrics::Sys,
 }
 
 impl Sample {
@@ -490,6 +492,7 @@ mod tests {
                 down: 30.0,
                 up: 12.0,
             }),
+            sys: Default::default(),
         };
         assert_eq!(
             s.lane(Lane::Internet),
@@ -522,6 +525,7 @@ mod tests {
                     up: 0.0,
                 },
                 lan: None,
+                sys: Default::default(),
             });
         }
         let first = h.samples.front().unwrap().at;

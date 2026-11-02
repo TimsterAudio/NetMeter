@@ -7,8 +7,11 @@
 //! window. Drag anywhere to move it; right-click for the everyday choices.
 //! Settings open in a window of their own.
 
+mod dash;
+
 use crate::autostart;
 use crate::glass::{self, Build, Icon, Tokens};
+use crate::metrics::{Panel, Snapshot, UsbDevice};
 use crate::net;
 use crate::rates::{self, Format, History, Lane, Prefix, Rate, Sample, Show, Units};
 use crate::sampler::Sampler;
@@ -22,6 +25,8 @@ use taw_panel::hifi;
 const STORAGE_KEY: &str = "taw-netmeter";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SIZE: Vec2 = Vec2::new(420.0, 180.0);
+/// The dashboard's size the first time it opens.
+pub const EXPANDED_SIZE: Vec2 = Vec2::new(860.0, 560.0);
 pub const MIN_SIZE: Vec2 = Vec2::new(200.0, 90.0);
 /// The settings window's size when it opens.
 const SETTINGS_SIZE: Vec2 = Vec2::new(380.0, 600.0);
@@ -61,6 +66,16 @@ struct Saved {
     system_title_bar: bool,
     /// Frosted or smoked, how see-through, and the traces' colours.
     glass: glass::Look,
+    /// The dashboard (the expanded window) rather than the meter.
+    expanded: bool,
+    /// The window's size in each mode, to go back to.
+    compact_size: Option<[f32; 2]>,
+    expanded_size: Option<[f32; 2]>,
+    /// The dashboard's tiles, in order.
+    panels: Vec<Panel>,
+    fahrenheit: bool,
+    /// Say when a USB device is plugged in or out.
+    usb_notices: bool,
 }
 
 impl Default for Saved {
@@ -81,6 +96,12 @@ impl Default for Saved {
             on_top: true,
             system_title_bar: false,
             glass: glass::Look::default(),
+            expanded: false,
+            compact_size: None,
+            expanded_size: None,
+            panels: Panel::DEFAULT.to_vec(),
+            fahrenheit: false,
+            usb_notices: true,
         }
     }
 }
@@ -114,6 +135,16 @@ pub struct NetMeterApp {
     /// While a custom scale is being set: the unit it's typed in (1 kilo,
     /// 2 mega, 3 giga).
     custom_power: Option<i32>,
+    /// The system as it is now.
+    snap: Snapshot,
+    /// The USB devices at the last reading, to tell what was plugged in.
+    usb_seen: Option<Vec<UsbDevice>>,
+    /// USB devices plugged in and out, newest last.
+    usb_events: Vec<UsbEvent>,
+    /// A passing message (USB), and when it came (egui's clock).
+    notice: Option<(String, f64)>,
+    /// egui's clock this frame.
+    now: f64,
     /// The adaptors, for the menu: (id, label).
     adaptors: Vec<(String, String)>,
 }
@@ -150,6 +181,11 @@ impl NetMeterApp {
             start_at_login,
             login_error: None,
             custom_power: None,
+            snap: Snapshot::default(),
+            usb_seen: None,
+            usb_events: Vec::new(),
+            notice: None,
+            now: 0.0,
             adaptors: Vec::new(),
         }
     }
@@ -185,14 +221,35 @@ impl NetMeterApp {
     }
 
     fn take_samples(&mut self) {
+        let now = self.now;
         while let Ok(r) = self.sampler.rx.try_recv() {
-            match r {
-                Ok(s) => {
-                    self.history.push(s);
-                    self.error = None;
+            self.history.push(r.sample);
+            self.error = r.net_error;
+            if let (Some(was), Some(is)) = (&self.usb_seen, &r.snap.usb) {
+                for (dev, connected) in usb_changes(was, is) {
+                    let what = match (&dev.speed_label(), connected) {
+                        (Some(sp), true) => format!("{} · {sp}", dev.name),
+                        _ => dev.name.clone(),
+                    };
+                    let msg = if connected {
+                        format!("Plugged in: {what}")
+                    } else {
+                        format!("Unplugged: {what}")
+                    };
+                    if self.s.usb_notices {
+                        self.notice = Some((msg.clone(), now));
+                    }
+                    self.usb_events.push(UsbEvent { at: now, text: msg });
                 }
-                Err(e) => self.error = Some(e),
+                let n = self.usb_events.len();
+                if n > 20 {
+                    self.usb_events.drain(..n - 20);
+                }
             }
+            if r.snap.usb.is_some() {
+                self.usb_seen = r.snap.usb.clone();
+            }
+            self.snap = r.snap;
         }
     }
 
@@ -392,7 +449,7 @@ impl NetMeterApp {
     /// The controls' pill, bottom right, while the mouse is over the window.
     fn controls(&mut self, ui: &mut Ui, screen: Rect, t: &Tokens) {
         let ctx = ui.ctx().clone();
-        let n = 4.0;
+        let n = 5.0;
         let (bw, h) = (26.0, 28.0);
         let inset = 10.0f32.min(screen.height() * 0.08);
         let r = Rect::from_min_size(
@@ -413,6 +470,14 @@ impl NetMeterApp {
                     "Stay on top"
                 },
             ),
+            (
+                Icon::Expand(self.s.expanded),
+                if self.s.expanded {
+                    "Back to the meter"
+                } else {
+                    "Expand into the dashboard"
+                },
+            ),
             (Icon::Minimise, "Minimise"),
             (Icon::Close, "Close"),
         ];
@@ -425,11 +490,31 @@ impl NetMeterApp {
                 match icon {
                     Icon::Settings => self.open_settings(&ctx),
                     Icon::OnTop(on) => self.set_on_top(&ctx, !on),
+                    Icon::Expand(_) => self.toggle_expanded(&ctx),
                     Icon::Minimise => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
                     Icon::Close => ctx.send_viewport_cmd(ViewportCommand::Close),
                 }
             }
         }
+    }
+
+    /// Between the meter and the dashboard: each keeps its own size.
+    fn toggle_expanded(&mut self, ctx: &egui::Context) {
+        let size = ctx
+            .input(|i| i.viewport().inner_rect)
+            .map(|r| [r.width(), r.height()]);
+        if self.s.expanded {
+            self.s.expanded_size = size.or(self.s.expanded_size);
+        } else {
+            self.s.compact_size = size.or(self.s.compact_size);
+        }
+        self.s.expanded = !self.s.expanded;
+        let next = if self.s.expanded {
+            self.s.expanded_size.map_or(EXPANDED_SIZE, Vec2::from)
+        } else {
+            self.s.compact_size.map_or(DEFAULT_SIZE, Vec2::from)
+        };
+        ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::InnerSize(next));
     }
 
     /// The everyday choices, on a right-click: short, as the menu can't
@@ -468,6 +553,15 @@ impl NetMeterApp {
         let mut on_top = self.s.on_top;
         if ui.checkbox(&mut on_top, "Stay on top").clicked() {
             self.set_on_top(&ctx, on_top);
+            ui.close();
+        }
+        let expand = if self.s.expanded {
+            "Back to the meter"
+        } else {
+            "Expand into the dashboard"
+        };
+        if ui.button(expand).clicked() {
+            self.toggle_expanded(&ctx);
             ui.close();
         }
         if ui.button("Settings…").clicked() {
@@ -733,6 +827,35 @@ impl NetMeterApp {
                 });
         });
 
+        heading(ui, t, "Dashboard", false);
+        ui.label(
+            egui::RichText::new("The tiles the expanded window shows. A tile with nothing to show on this computer stays hidden.")
+                .font(glass::regular(12.5))
+                .color(t.ink2),
+        );
+        ui.horizontal_wrapped(|ui| {
+            for p in Panel::ALL {
+                let mut on = s.panels.contains(&p);
+                if ui.checkbox(&mut on, p.name()).changed() {
+                    if on {
+                        s.panels.push(p);
+                        s.panels
+                            .sort_by_key(|x| Panel::ALL.iter().position(|y| y == x));
+                    } else {
+                        s.panels.retain(|x| *x != p);
+                    }
+                }
+            }
+        });
+        row(ui, t, "Temperatures", |ui| {
+            ui.selectable_value(&mut s.fahrenheit, false, "°C");
+            ui.selectable_value(&mut s.fahrenheit, true, "°F");
+        });
+        ui.checkbox(
+            &mut s.usb_notices,
+            "Say when a USB device is plugged in or out",
+        );
+
         heading(ui, t, "Window", false);
         let mut on_top = s.on_top;
         let mut system_bar = s.system_title_bar;
@@ -819,6 +942,27 @@ fn beside(meter: Rect, size: Vec2, monitor: Option<Vec2>) -> Pos2 {
     Pos2::new(x, y)
 }
 
+/// A USB device plugged in or out.
+struct UsbEvent {
+    at: f64,
+    text: String,
+}
+
+/// What was plugged in (`true`) and unplugged (`false`) between two lists.
+fn usb_changes(was: &[UsbDevice], is: &[UsbDevice]) -> Vec<(UsbDevice, bool)> {
+    let mut v: Vec<(UsbDevice, bool)> = is
+        .iter()
+        .filter(|d| !was.iter().any(|w| w.id == d.id))
+        .map(|d| (d.clone(), true))
+        .collect();
+    v.extend(
+        was.iter()
+            .filter(|w| !is.iter().any(|d| d.id == w.id))
+            .map(|w| (w.clone(), false)),
+    );
+    v
+}
+
 fn label_text(t: &Tokens, s: &str) -> egui::RichText {
     egui::RichText::new(s)
         .font(glass::regular(13.5))
@@ -864,6 +1008,7 @@ impl eframe::App for NetMeterApp {
         let ctx = ui.ctx().clone();
         let t = Tokens::from_ctx(&ctx, &self.s.glass);
         glass::apply_visuals(&ctx, &t);
+        self.now = ui.input(|i| i.time);
         self.take_samples();
 
         let free = ui.memory(|m| m.focused().is_none());
@@ -887,7 +1032,12 @@ impl eframe::App for NetMeterApp {
             ctx.stop_dragging();
         }
         resp.context_menu(|ui| self.quick_menu(ui));
-        self.display(ui, screen, &t);
+        if self.s.expanded {
+            self.dashboard(ui, screen, &t);
+        } else {
+            self.display(ui, screen, &t);
+            self.show_notice(ui, screen, &t);
+        }
         let under_mouse = ui.input(|i| i.pointer.hover_pos()).is_some();
         if self.s.controls && !self.s.system_title_bar && under_mouse {
             self.controls(ui, screen, &t);
@@ -921,6 +1071,17 @@ mod tests {
         assert!(s.on_top);
         let s: Saved = serde_json::from_str(r#"{"units":"Bytes","prefix":"Mega"}"#).unwrap();
         assert_eq!(s.format().rate(2_500_000.0), "2.50 MB/s");
+    }
+
+    #[test]
+    fn usb_plugged_in_and_out() {
+        let d = |id: &str| UsbDevice {
+            id: id.into(),
+            name: id.into(),
+            speed_mbps: None,
+        };
+        let c = usb_changes(&[d("a"), d("b")], &[d("b"), d("c")]);
+        assert_eq!(c, vec![(d("c"), true), (d("a"), false)]);
     }
 
     #[test]

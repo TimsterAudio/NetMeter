@@ -2,8 +2,10 @@
 //! hands each reading to the window, so the graph keeps its history while
 //! the window is minimised.
 
+use crate::metrics::Snapshot;
 use crate::net::{self, Adaptor, LanMeter};
 use crate::rates::{Rate, Sample};
+use crate::sys::SysMeter;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -18,9 +20,17 @@ pub struct Config {
     pub stop: AtomicBool,
 }
 
+/// One reading: the graphs' sample, the system as it is now, and why the
+/// network couldn't be read, if it couldn't.
+pub struct Reading {
+    pub sample: Sample,
+    pub snap: Snapshot,
+    pub net_error: Option<String>,
+}
+
 pub struct Sampler {
     pub config: Arc<Config>,
-    pub rx: Receiver<Result<Sample, String>>,
+    pub rx: Receiver<Reading>,
     /// Whether this computer can tell the LAN from the Internet.
     pub lan_known: bool,
 }
@@ -93,13 +103,11 @@ pub fn moved(
     (rx, tx)
 }
 
-fn run(
-    config: Arc<Config>,
-    mut lan: Option<LanMeter>,
-    out: Sender<Result<Sample, String>>,
-    ctx: egui::Context,
-) {
+fn run(config: Arc<Config>, mut lan: Option<LanMeter>, out: Sender<Reading>, ctx: egui::Context) {
     let start = Instant::now();
+    // Made here: some of it belongs to the thread that opens it.
+    let mut sys = SysMeter::new();
+    sys.read(1.0);
     let mut last = HashMap::new();
     let mut then = Instant::now();
     if let Ok(a) = net::adaptors() {
@@ -115,21 +123,33 @@ fn run(
         let dt = now.duration_since(then).as_secs_f64().max(1e-3);
         then = now;
         let choice = config.adaptor.lock().unwrap().clone();
-        let reading = net::adaptors().map_err(|e| e.to_string()).map(|a| {
-            let (rx, tx) = moved(&mut last, &a, choice.as_deref());
-            let lan = lan.as_mut().and_then(LanMeter::read).map(|(r, t)| Rate {
-                down: r as f64 / dt,
-                up: t as f64 / dt,
-            });
-            Sample {
-                at: now.duration_since(start).as_secs_f64(),
-                all: Rate {
+        let (sys_now, snap) = sys.read(dt);
+        let mut sample = Sample {
+            at: now.duration_since(start).as_secs_f64(),
+            all: Rate::default(),
+            lan: None,
+            sys: sys_now,
+        };
+        let net_error = match net::adaptors() {
+            Ok(a) => {
+                let (rx, tx) = moved(&mut last, &a, choice.as_deref());
+                sample.lan = lan.as_mut().and_then(LanMeter::read).map(|(r, t)| Rate {
+                    down: r as f64 / dt,
+                    up: t as f64 / dt,
+                });
+                sample.all = Rate {
                     down: rx as f64 / dt,
                     up: tx as f64 / dt,
-                },
-                lan,
+                };
+                None
             }
-        });
+            Err(e) => Some(e.to_string()),
+        };
+        let reading = Reading {
+            sample,
+            snap,
+            net_error,
+        };
         if out.send(reading).is_err() {
             return;
         }
