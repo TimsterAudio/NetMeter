@@ -91,3 +91,7 @@ cargo clippy --target x86_64-pc-windows-gnu --all-targets -- -D warnings   # Win
 - Windows: the LAN split, from TCP extended statistics when run as administrator, or ETW's network events.
 - Totals for the day and the month, kept between runs.
 - A place in the family switcher, if the family wants it there.
+
+### Maybe later
+
+- **A Departures look**, after the Split-Flap Clock (TAW-Panel's looks review): figures on flaps that fold when they change, graphs as a board of lit cells, and the dashboard as a departures board with a status for each row (On time, Busy, Hot, Full) and USB devices arriving and departing. Offered beside Glass in Settings. Parked on 2026-11-03; there's a live mock-up in [Net Meter Departures](https://claude.ai/artifact/RGLk4wCqApJkSQzH5jLTGi) (private to the owner until shared).
