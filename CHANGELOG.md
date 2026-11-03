@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 – 2026-11-03
+
 - The dashboard: the new expand button (in the controls, or on the right-click menu) grows the meter into a window of tiles, and back. Each mode keeps its own size. Settings, Dashboard picks the tiles; a tile with nothing to show on this computer stays hidden.
 - CPU: load over time, each core, the processor's name and temperature.
 - Memory: in use over time, and swap on Linux.
